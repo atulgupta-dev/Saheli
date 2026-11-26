@@ -49,6 +49,37 @@ class MenstrualService:
             updated_at=doc.get("updated_at", ""),
         )
 
+    def _refresh_menstrual_stage_profile(self, uid: str) -> None:
+        """Recalculate and synchronize menstrual stage profile based on all recorded periods."""
+        docs = self.firestore.list_menstrual_cycles(uid)
+        periods = [self._convert_doc_to_response(d) for d in docs]
+
+        if not periods:
+            self.firestore.set_stage_profile(
+                uid=uid,
+                stage="menstrual",
+                stage_data={
+                    "last_period_date": None,
+                    "average_cycle_length": None,
+                    "average_period_duration": None,
+                    "is_irregular": False,
+                },
+            )
+            return
+
+        latest_record = max(periods, key=lambda p: datetime.date.fromisoformat(p.start_date))
+        stats = calculate_statistics(periods)
+        self.firestore.set_stage_profile(
+            uid=uid,
+            stage="menstrual",
+            stage_data={
+                "last_period_date": latest_record.start_date,
+                "average_cycle_length": stats.average_cycle_length_days,
+                "average_period_duration": stats.average_period_duration_days,
+                "is_irregular": stats.is_irregular,
+            },
+        )
+
     def create_cycle_record(self, uid: str, payload: PeriodRecordCreate) -> PeriodRecordResponse:
         # Check existing records to prevent duplicates and overlaps
         existing_docs = self.firestore.list_menstrual_cycles(uid)
@@ -73,20 +104,7 @@ class MenstrualService:
         }
 
         self.firestore.save_menstrual_cycle(uid, cycle_id, cycle_data)
-
-        # Update menstrual stage profile summary
-        updated_periods = existing_periods + [self._convert_doc_to_response(cycle_data)]
-        stats = calculate_statistics(updated_periods)
-        self.firestore.set_stage_profile(
-            uid=uid,
-            stage="menstrual",
-            stage_data={
-                "last_period_date": payload.start_date.isoformat(),
-                "average_cycle_length": stats.average_cycle_length_days,
-                "average_period_duration": stats.average_period_duration_days,
-                "is_irregular": stats.is_irregular,
-            },
-        )
+        self._refresh_menstrual_stage_profile(uid)
 
         return self._convert_doc_to_response(cycle_data)
 
@@ -135,6 +153,7 @@ class MenstrualService:
         }
 
         self.firestore.save_menstrual_cycle(uid, cycle_id, updated_data)
+        self._refresh_menstrual_stage_profile(uid)
         return self._convert_doc_to_response(updated_data)
 
     def get_cycle_record(self, uid: str, cycle_id: str) -> PeriodRecordResponse:
@@ -152,6 +171,7 @@ class MenstrualService:
         deleted = self.firestore.delete_menstrual_cycle(uid, cycle_id)
         if not deleted:
             raise NotFoundError(f"Menstrual cycle record '{cycle_id}' not found.")
+        self._refresh_menstrual_stage_profile(uid)
 
     def get_statistics(self, uid: str) -> CycleStatistics:
         docs = self.firestore.list_menstrual_cycles(uid)

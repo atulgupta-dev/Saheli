@@ -137,6 +137,158 @@ def test_delete_period_record():
     assert get_res.json()["error"]["code"] == "NOT_FOUND"
 
 
+def test_backfilled_older_period_preserves_latest_date():
+    user_headers = {"Authorization": "Bearer mock_backfill_user"}
+    # Log recent period first (March 2026)
+    res1 = client.post(
+        "/api/v1/menstrual/cycles",
+        headers=user_headers,
+        json={"start_date": "2026-03-01", "end_date": "2026-03-05"},
+    )
+    assert res1.status_code == 201
+
+    prof1 = client.get("/api/v1/profile", headers=user_headers).json()
+    assert prof1["stage_profiles"]["menstrual"]["last_period_date"] == "2026-03-01"
+
+    # Backfill older period (January 2026)
+    res2 = client.post(
+        "/api/v1/menstrual/cycles",
+        headers=user_headers,
+        json={"start_date": "2026-01-01", "end_date": "2026-01-05"},
+    )
+    assert res2.status_code == 201
+
+    # Stage profile last_period_date must STILL be 2026-03-01, NOT 2026-01-01
+    prof2 = client.get("/api/v1/profile", headers=user_headers).json()
+    assert prof2["stage_profiles"]["menstrual"]["last_period_date"] == "2026-03-01"
+
+
+def test_update_and_delete_recalculate_stage_profile():
+    user_headers = {"Authorization": "Bearer mock_recalc_user"}
+    # Record 1: Jan 1
+    res1 = client.post(
+        "/api/v1/menstrual/cycles",
+        headers=user_headers,
+        json={"start_date": "2026-01-01", "end_date": "2026-01-05"},
+    )
+    id1 = res1.json()["cycle_id"]
+
+    # Record 2: Jan 29
+    res2 = client.post(
+        "/api/v1/menstrual/cycles",
+        headers=user_headers,
+        json={"start_date": "2026-01-29", "end_date": "2026-02-02"},
+    )
+    id2 = res2.json()["cycle_id"]
+
+    prof = client.get("/api/v1/profile", headers=user_headers).json()
+    assert prof["stage_profiles"]["menstrual"]["last_period_date"] == "2026-01-29"
+    assert prof["stage_profiles"]["menstrual"]["average_cycle_length"] == 28.0
+
+    # Update Record 2 start date to Jan 31
+    patch_res = client.patch(
+        f"/api/v1/menstrual/cycles/{id2}",
+        headers=user_headers,
+        json={"start_date": "2026-01-31", "end_date": "2026-02-04"},
+    )
+    assert patch_res.status_code == 200
+
+    prof_after_update = client.get("/api/v1/profile", headers=user_headers).json()
+    assert prof_after_update["stage_profiles"]["menstrual"]["last_period_date"] == "2026-01-31"
+    assert prof_after_update["stage_profiles"]["menstrual"]["average_cycle_length"] == 30.0
+
+    # Delete Record 2
+    del_res = client.delete(f"/api/v1/menstrual/cycles/{id2}", headers=user_headers)
+    assert del_res.status_code == 204
+
+    prof_after_del = client.get("/api/v1/profile", headers=user_headers).json()
+    # Should fall back to Record 1's date
+    assert prof_after_del["stage_profiles"]["menstrual"]["last_period_date"] == "2026-01-01"
+    assert prof_after_del["stage_profiles"]["menstrual"]["average_cycle_length"] is None
+
+    # Delete Record 1
+    client.delete(f"/api/v1/menstrual/cycles/{id1}", headers=user_headers)
+    prof_all_del = client.get("/api/v1/profile", headers=user_headers).json()
+    assert prof_all_del["stage_profiles"]["menstrual"]["last_period_date"] is None
+
+
+def test_robust_safety_screening_variations():
+    user_headers = {"Authorization": "Bearer mock_safety_user"}
+
+    # Hemorrhage variants
+    cases_urgent_hemorrhage = [
+        "soaking 2 pads an hour",
+        "bleeding through two tampons an hour",
+        "thakke nikal rahe hain aur bahut zyada khoon beh raha hai",
+        "large golf-ball sized blood clots coming out",
+    ]
+    for text in cases_urgent_hemorrhage:
+        res = client.post(
+            "/api/v1/menstrual/symptoms",
+            headers=user_headers,
+            json={"date": "2026-02-01", "symptoms": [text], "severity": "severe"},
+        )
+        assert res.status_code == 201
+        assert res.json()["safety"]["level"] == "urgent"
+        assert "RULE-MENST-URG-01" in res.json()["safety"]["rule_ids"]
+
+    # Shock / syncope variants
+    cases_urgent_syncope = [
+        "passed out on the bathroom floor from blood loss",
+        " चक्कर आ रहे हैं और behosh ho gayi",
+        "blacking out when standing up during period",
+    ]
+    for text in cases_urgent_syncope:
+        res = client.post(
+            "/api/v1/menstrual/symptoms",
+            headers=user_headers,
+            json={"date": "2026-02-01", "symptoms": [text], "severity": "severe"},
+        )
+        assert res.status_code == 201
+        assert res.json()["safety"]["level"] == "urgent"
+        assert "RULE-MENST-URG-02" in res.json()["safety"]["rule_ids"]
+
+    # TSS variants
+    cases_urgent_tss = [
+        "tampon is stuck inside with high fever and vomiting",
+        "menstrual cup user with sudden high chills, rash, and puking",
+    ]
+    for text in cases_urgent_tss:
+        res = client.post(
+            "/api/v1/menstrual/symptoms",
+            headers=user_headers,
+            json={"date": "2026-02-01", "symptoms": [text], "severity": "severe"},
+        )
+        assert res.status_code == 201
+        assert res.json()["safety"]["level"] == "urgent"
+        assert "RULE-MENST-URG-03" in res.json()["safety"]["rule_ids"]
+
+    # Acute unilateral / severe pain variants
+    cases_urgent_pain = [
+        "unbearable sharp pain on one side of pelvis",
+        "sudden excruciating pelvic cramps unable to stand",
+    ]
+    for text in cases_urgent_pain:
+        res = client.post(
+            "/api/v1/menstrual/symptoms",
+            headers=user_headers,
+            json={"date": "2026-02-01", "symptoms": [text], "severity": "severe"},
+        )
+        assert res.status_code == 201
+        assert res.json()["safety"]["level"] == "urgent"
+        assert "RULE-MENST-URG-04" in res.json()["safety"]["rule_ids"]
+
+    # Consult variants: prolonged bleeding
+    res_prolonged = client.post(
+        "/api/v1/menstrual/symptoms",
+        headers=user_headers,
+        json={"date": "2026-02-01", "symptoms": ["bleeding for 12 days straight"], "severity": "moderate"},
+    )
+    assert res_prolonged.status_code == 201
+    assert res_prolonged.json()["safety"]["level"] == "consult"
+    assert "RULE-MENST-CON-01" in res_prolonged.json()["safety"]["rule_ids"]
+
+
 # -------------------------------------------------------------
 # 4. Cycle Statistics & Predictions
 # -------------------------------------------------------------

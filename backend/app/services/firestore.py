@@ -222,6 +222,18 @@ class FirestoreService:
         user_ref = self._client.collection("users").document(uid)
         user_ref.collection("stage_profiles").document(stage).set(stage_data, merge=True)
 
+    def get_stage_profile(self, uid: str, stage: str) -> Optional[Dict[str, Any]]:
+        """Retrieve stage-specific profile fields under users/{uid}/stage_profiles/{stage}."""
+        if self.use_mock:
+            user_data = self._memory_store.get(uid)
+            if not user_data:
+                return None
+            return user_data.get("stage_profiles", {}).get(stage)
+
+        assert self._client is not None
+        doc = self._client.collection("users").document(uid).collection("stage_profiles").document(stage).get()
+        return doc.to_dict() if doc.exists else None
+
     # ---------------------------------------------------------
     # Subcollections (Scoped strictly under users/{uid}/...)
     # ---------------------------------------------------------
