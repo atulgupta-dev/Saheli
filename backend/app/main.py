@@ -17,6 +17,10 @@ from app.core.exceptions import (
     saheli_app_exception_handler,
     validation_exception_handler,
 )
+from app.modules.pregnancy.reports.errors import (
+    ReportAPIError,
+    report_api_error_handler,
+)
 from app.core.firebase import get_firebase_app
 from app.core.middleware import RequestTracingMiddleware
 
@@ -62,6 +66,7 @@ app.add_middleware(
 
 # Structured Error Exception Handlers
 app.add_exception_handler(SaheliAppError, saheli_app_exception_handler)
+app.add_exception_handler(ReportAPIError, report_api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)

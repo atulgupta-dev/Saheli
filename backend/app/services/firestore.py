@@ -44,6 +44,14 @@ class FirestoreService:
                     self._client = firestore.Client(project=settings.GOOGLE_CLOUD_PROJECT)
                     logger.info(f"Connected to Cloud Firestore via ADC ({settings.GOOGLE_CLOUD_PROJECT})")
             except Exception as exc:
+                if settings.is_production:
+                    logger.critical(
+                        f"CRITICAL: Failed to connect to live Cloud Firestore in production ({type(exc).__name__}: {exc}). "
+                        "In-memory fallback is disabled in production to protect data durability."
+                    )
+                    raise RuntimeError(
+                        f"Cloud Firestore connection failed in production: {type(exc).__name__}: {exc}"
+                    ) from exc
                 logger.warning(f"Could not connect to live Cloud Firestore ({type(exc).__name__}). Using in-memory fallback.")
                 self.use_mock = True
 
