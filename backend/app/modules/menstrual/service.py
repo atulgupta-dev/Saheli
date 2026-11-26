@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from app.core.exceptions import NotFoundError, ValidationError
 from app.modules.menstrual.models import (
     CyclePrediction,
@@ -49,48 +49,27 @@ class MenstrualService:
             updated_at=doc.get("updated_at", ""),
         )
 
-    def _refresh_menstrual_stage_profile(self, uid: str) -> None:
-        """Recalculate and synchronize menstrual stage profile based on all recorded periods."""
-        docs = self.firestore.list_menstrual_cycles(uid)
+    def _compute_stage_profile_data(self, docs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Compute stage profile summary metrics from a collection of raw cycle documents."""
         periods = [self._convert_doc_to_response(d) for d in docs]
-
         if not periods:
-            self.firestore.set_stage_profile(
-                uid=uid,
-                stage="menstrual",
-                stage_data={
-                    "last_period_date": None,
-                    "average_cycle_length": None,
-                    "average_period_duration": None,
-                    "is_irregular": False,
-                },
-            )
-            return
+            return {
+                "last_period_date": None,
+                "average_cycle_length": None,
+                "average_period_duration": None,
+                "is_irregular": False,
+            }
 
         latest_record = max(periods, key=lambda p: datetime.date.fromisoformat(p.start_date))
         stats = calculate_statistics(periods)
-        self.firestore.set_stage_profile(
-            uid=uid,
-            stage="menstrual",
-            stage_data={
-                "last_period_date": latest_record.start_date,
-                "average_cycle_length": stats.average_cycle_length_days,
-                "average_period_duration": stats.average_period_duration_days,
-                "is_irregular": stats.is_irregular,
-            },
-        )
+        return {
+            "last_period_date": latest_record.start_date,
+            "average_cycle_length": stats.average_cycle_length_days,
+            "average_period_duration": stats.average_period_duration_days,
+            "is_irregular": stats.is_irregular,
+        }
 
     def create_cycle_record(self, uid: str, payload: PeriodRecordCreate) -> PeriodRecordResponse:
-        # Check existing records to prevent duplicates and overlaps
-        existing_docs = self.firestore.list_menstrual_cycles(uid)
-        existing_periods = [self._convert_doc_to_response(d) for d in existing_docs]
-
-        overlap = check_period_overlap(payload.start_date, payload.end_date, existing_periods)
-        if overlap:
-            raise ValidationError(
-                f"Period overlaps with an existing recorded cycle from {overlap[0]} to {overlap[1]}."
-            )
-
         cycle_id = f"cyc_{uuid.uuid4().hex[:8]}"
         duration = ((payload.end_date - payload.start_date).days + 1) if payload.end_date else None
 
@@ -103,10 +82,20 @@ class MenstrualService:
             "notes": payload.notes,
         }
 
-        self.firestore.save_menstrual_cycle(uid, cycle_id, cycle_data)
-        self._refresh_menstrual_stage_profile(uid)
+        def _mutation(existing_docs: List[Dict[str, Any]]) -> Tuple[str, str, Optional[Dict[str, Any]], Dict[str, Any]]:
+            existing_periods = [self._convert_doc_to_response(d) for d in existing_docs]
+            overlap = check_period_overlap(payload.start_date, payload.end_date, existing_periods)
+            if overlap:
+                raise ValidationError(
+                    f"Period overlaps with an existing recorded cycle from {overlap[0]} to {overlap[1]}."
+                )
 
-        return self._convert_doc_to_response(cycle_data)
+            all_docs = existing_docs + [cycle_data]
+            stage_data = self._compute_stage_profile_data(all_docs)
+            return "save", cycle_id, cycle_data, stage_data
+
+        saved_data = self.firestore.execute_menstrual_cycle_mutation(uid, _mutation)
+        return self._convert_doc_to_response(saved_data or cycle_data)
 
     def update_cycle_record(
         self,
@@ -114,47 +103,50 @@ class MenstrualService:
         cycle_id: str,
         payload: PeriodRecordUpdate,
     ) -> PeriodRecordResponse:
-        doc = self.firestore.get_menstrual_cycle(uid, cycle_id)
-        if not doc:
-            raise NotFoundError(f"Menstrual cycle record '{cycle_id}' not found.")
+        def _mutation(existing_docs: List[Dict[str, Any]]) -> Tuple[str, str, Optional[Dict[str, Any]], Dict[str, Any]]:
+            doc = next((d for d in existing_docs if d.get("cycle_id") == cycle_id), None)
+            if not doc:
+                raise NotFoundError(f"Menstrual cycle record '{cycle_id}' not found.")
 
-        current_start = datetime.date.fromisoformat(doc["start_date"])
-        current_end = datetime.date.fromisoformat(doc["end_date"]) if doc.get("end_date") else None
+            current_start = datetime.date.fromisoformat(doc["start_date"])
+            current_end = datetime.date.fromisoformat(doc["end_date"]) if doc.get("end_date") else None
 
-        new_start = payload.start_date if payload.start_date is not None else current_start
-        new_end = payload.end_date if payload.end_date is not None else current_end
+            new_start = payload.start_date if payload.start_date is not None else current_start
+            new_end = payload.end_date if payload.end_date is not None else current_end
 
-        if new_end and new_end < new_start:
-            raise ValidationError("end_date cannot be earlier than start_date.")
+            if new_end and new_end < new_start:
+                raise ValidationError("end_date cannot be earlier than start_date.")
 
-        if new_end:
-            duration = (new_end - new_start).days + 1
-            if duration > 16:
-                raise ValidationError("Period duration cannot exceed 16 days in a single record.")
-        else:
-            duration = None
+            if new_end:
+                duration = (new_end - new_start).days + 1
+                if duration > 16:
+                    raise ValidationError("Period duration cannot exceed 16 days in a single record.")
+            else:
+                duration = None
 
-        # Check overlaps against all other periods
-        existing_docs = self.firestore.list_menstrual_cycles(uid)
-        existing_periods = [self._convert_doc_to_response(d) for d in existing_docs]
-        overlap = check_period_overlap(new_start, new_end, existing_periods, ignore_cycle_id=cycle_id)
-        if overlap:
-            raise ValidationError(
-                f"Updated period dates overlap with an existing recorded cycle from {overlap[0]} to {overlap[1]}."
-            )
+            # Check overlaps against all other periods
+            existing_periods = [self._convert_doc_to_response(d) for d in existing_docs]
+            overlap = check_period_overlap(new_start, new_end, existing_periods, ignore_cycle_id=cycle_id)
+            if overlap:
+                raise ValidationError(
+                    f"Updated period dates overlap with an existing recorded cycle from {overlap[0]} to {overlap[1]}."
+                )
 
-        updated_data = {
-            **doc,
-            "start_date": new_start.isoformat(),
-            "end_date": new_end.isoformat() if new_end else None,
-            "duration_days": duration,
-            "flow_intensity": payload.flow_intensity if payload.flow_intensity is not None else doc.get("flow_intensity"),
-            "notes": payload.notes if payload.notes is not None else doc.get("notes"),
-        }
+            updated_data = {
+                **doc,
+                "start_date": new_start.isoformat(),
+                "end_date": new_end.isoformat() if new_end else None,
+                "duration_days": duration,
+                "flow_intensity": payload.flow_intensity if payload.flow_intensity is not None else doc.get("flow_intensity"),
+                "notes": payload.notes if payload.notes is not None else doc.get("notes"),
+            }
 
-        self.firestore.save_menstrual_cycle(uid, cycle_id, updated_data)
-        self._refresh_menstrual_stage_profile(uid)
-        return self._convert_doc_to_response(updated_data)
+            all_docs = [updated_data if d.get("cycle_id") == cycle_id else d for d in existing_docs]
+            stage_data = self._compute_stage_profile_data(all_docs)
+            return "save", cycle_id, updated_data, stage_data
+
+        saved_data = self.firestore.execute_menstrual_cycle_mutation(uid, _mutation)
+        return self._convert_doc_to_response(saved_data or {})
 
     def get_cycle_record(self, uid: str, cycle_id: str) -> PeriodRecordResponse:
         doc = self.firestore.get_menstrual_cycle(uid, cycle_id)
@@ -168,10 +160,16 @@ class MenstrualService:
         return PeriodListResponse(cycles=periods, total_count=len(periods))
 
     def delete_cycle_record(self, uid: str, cycle_id: str) -> None:
-        deleted = self.firestore.delete_menstrual_cycle(uid, cycle_id)
-        if not deleted:
-            raise NotFoundError(f"Menstrual cycle record '{cycle_id}' not found.")
-        self._refresh_menstrual_stage_profile(uid)
+        def _mutation(existing_docs: List[Dict[str, Any]]) -> Tuple[str, str, Optional[Dict[str, Any]], Dict[str, Any]]:
+            doc = next((d for d in existing_docs if d.get("cycle_id") == cycle_id), None)
+            if not doc:
+                raise NotFoundError(f"Menstrual cycle record '{cycle_id}' not found.")
+
+            remaining_docs = [d for d in existing_docs if d.get("cycle_id") != cycle_id]
+            stage_data = self._compute_stage_profile_data(remaining_docs)
+            return "delete", cycle_id, None, stage_data
+
+        self.firestore.execute_menstrual_cycle_mutation(uid, _mutation)
 
     def get_statistics(self, uid: str) -> CycleStatistics:
         docs = self.firestore.list_menstrual_cycles(uid)

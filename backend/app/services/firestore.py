@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import Any, Dict, List, Optional
+import threading
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from google.cloud import firestore
 from app.core.config import settings
 from app.core.models import (
@@ -28,6 +29,7 @@ class FirestoreService:
     def __init__(self, client: Optional[firestore.Client] = None, use_mock: bool = False):
         self.use_mock = use_mock
         self._client = client
+        self._lock = threading.RLock()
         # In-memory store: {uid: {"profile": {...}, "stage_profiles": {...}, "conversations": {...}, ...}}
         self._memory_store: Dict[str, Dict[str, Any]] = {}
 
@@ -388,6 +390,77 @@ class FirestoreService:
             return False
         doc_ref.delete()
         return True
+
+    def execute_menstrual_cycle_mutation(
+        self,
+        uid: str,
+        mutation_callback: Callable[[List[Dict[str, Any]]], Tuple[str, str, Optional[Dict[str, Any]], Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Executes a menstrual cycle mutation (create, update, delete) and stage profile
+        recalculation in an atomic transaction or thread-safe synchronization block.
+        Ensures concurrent writes never leave stale statistics or corrupted stage profiles.
+        """
+        if self.use_mock:
+            with self._lock:
+                if uid not in self._memory_store:
+                    self.create_or_get_user_profile(uid)
+                current_cycles = list(self._memory_store[uid].get("menstrual_cycles", {}).values())
+                current_cycles = sorted(current_cycles, key=lambda c: c.get("start_date", ""))
+
+                action, cycle_id, cycle_data, stage_data = mutation_callback(current_cycles)
+
+                now = _utc_now_iso()
+                if action == "delete":
+                    self._memory_store[uid].get("menstrual_cycles", {}).pop(cycle_id, None)
+                else:
+                    assert cycle_data is not None
+                    cycle_data["updated_at"] = now
+                    if "created_at" not in cycle_data:
+                        cycle_data["created_at"] = now
+                    self._memory_store[uid].setdefault("menstrual_cycles", {})[cycle_id] = cycle_data
+
+                stage_data["updated_at"] = now
+                self._memory_store[uid].setdefault("stage_profiles", {})["menstrual"] = stage_data
+                return cycle_data
+
+        assert self._client is not None
+        user_ref = self._client.collection("users").document(uid)
+        cycles_coll = user_ref.collection("menstrual_cycles")
+        stage_ref = user_ref.collection("stage_profiles").document("menstrual")
+
+        transaction = self._client.transaction()
+
+        @firestore.transactional
+        def _in_transaction(txn: firestore.Transaction) -> Optional[Dict[str, Any]]:
+            # READS FIRST: Read stage profile to enlist it in transaction conflict detection
+            _ = stage_ref.get(transaction=txn)
+
+            # Read all cycles for user
+            query = cycles_coll.order_by("start_date")
+            docs = list(txn.get(query))
+            current_cycles = [d.to_dict() for d in docs if d.exists]
+
+            # RUN CALLBACK: Compute new cycle data and recalculated stage profile
+            action, cycle_id, cycle_data, stage_data = mutation_callback(current_cycles)
+
+            # WRITES AFTER READS: Atomic commit
+            now = _utc_now_iso()
+            cycle_ref = cycles_coll.document(cycle_id)
+            if action == "delete":
+                txn.delete(cycle_ref)
+            else:
+                assert cycle_data is not None
+                cycle_data["updated_at"] = now
+                if "created_at" not in cycle_data:
+                    cycle_data["created_at"] = now
+                txn.set(cycle_ref, cycle_data)
+
+            stage_data["updated_at"] = now
+            txn.set(stage_ref, stage_data, merge=True)
+            return cycle_data
+
+        return _in_transaction(transaction)
 
     def save_menstrual_symptom(self, uid: str, entry_id: str, entry_data: Dict[str, Any]) -> str:
         """Store menstrual symptom record under users/{uid}/menstrual_symptoms/{entry_id}."""

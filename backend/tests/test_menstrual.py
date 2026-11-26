@@ -419,8 +419,36 @@ def test_menstrual_cross_user_isolation():
 
 
 # -------------------------------------------------------------
-# 7. Unauthenticated Requests Rejected
+# 7. Unauthenticated Requests Rejected & Concurrency Consistency
 # -------------------------------------------------------------
+
+def test_concurrent_period_updates_consistency():
+    """Verify concurrent updates do not leave stale stage profile statistics."""
+    import concurrent.futures
+
+    concurrent_user_headers = {"Authorization": "Bearer mock_concur_user"}
+
+    payload_a = {"start_date": "2026-01-01", "end_date": "2026-01-05"}
+    payload_b = {"start_date": "2026-01-29", "end_date": "2026-02-02"}
+
+    def _post_period(payload):
+        return client.post("/api/v1/menstrual/cycles", headers=concurrent_user_headers, json=payload)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(_post_period, payload_a)
+        f2 = executor.submit(_post_period, payload_b)
+        res1 = f1.result()
+        res2 = f2.result()
+
+    assert res1.status_code == 201
+    assert res2.status_code == 201
+
+    # Stage profile must reflect both records with accurate average cycle length
+    prof = client.get("/api/v1/profile", headers=concurrent_user_headers).json()
+    menst_prof = prof["stage_profiles"]["menstrual"]
+    assert menst_prof["last_period_date"] == "2026-01-29"
+    assert menst_prof["average_cycle_length"] == 28.0
+
 
 def test_menstrual_unauthenticated_rejected():
     res = client.get("/api/v1/menstrual/cycles")
