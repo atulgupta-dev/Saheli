@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import router as api_v1_router
+from app.modules.menstrual.router import router as menstrual_router
 from app.core.config import settings
 from app.core.exceptions import (
     SaheliAppError,
@@ -79,3 +80,4 @@ def health() -> dict[str, str]:
 
 # Register V1 API Routes
 app.include_router(api_v1_router)
+app.include_router(menstrual_router)
