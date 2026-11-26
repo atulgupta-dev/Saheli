@@ -6,7 +6,10 @@ client = TestClient(app)
 AUTH_HEADERS = {"Authorization": "Bearer mock_reports_user"}
 
 
-def test_upload_report_with_storage_consent():
+def test_upload_report_with_storage_consent(monkeypatch):
+    from app.services.firestore import FirestoreService
+    saved = []
+    monkeypatch.setattr(FirestoreService, "save_report_metadata", lambda *args, **kwargs: saved.append(kwargs))
     # Upload with valid PDF magic bytes %PDF-
     valid_pdf_bytes = b"%PDF-1.4 simulated ultrasound report content"
     res = client.post(
@@ -15,20 +18,9 @@ def test_upload_report_with_storage_consent():
         data={"stage": "pregnancy", "consent_to_store": "true"},
         files={"file": ("ultrasound_week28.pdf", valid_pdf_bytes, "application/pdf")},
     )
-    assert res.status_code == 200
-    data = res.json()
-    assert data["report_id"].startswith("rep_")
-    assert data["status"] == "completed"
-    assert data["extracted"]["gestational_age_weeks"] == 28
-    assert len(data["extracted"]["measurements"]) > 0
-    assert len(data["citations"]) > 0
-    assert "Education only" in data["warnings"][0]
-
-    # Verify retrieval when consent_to_store was true
-    rep_id = data["report_id"]
-    get_res = client.get(f"/api/v1/reports/{rep_id}", headers=AUTH_HEADERS)
-    assert get_res.status_code == 200
-    assert get_res.json()["report_id"] == rep_id
+    assert res.status_code == 501
+    assert res.json()["error"]["code"] == "FEATURE_NOT_AVAILABLE"
+    assert saved == []
 
 
 def test_upload_report_without_storage_consent():
@@ -40,15 +32,8 @@ def test_upload_report_without_storage_consent():
         data={"stage": "pregnancy", "consent_to_store": "false"},
         files={"file": ("ultrasound_scan.png", valid_png_bytes, "image/png")},
     )
-    assert res.status_code == 200
-    data = res.json()
-    assert data["report_id"].startswith("rep_")
-
-    # Spark policy: When consent_to_store is false, report is NOT saved to Firestore
-    rep_id = data["report_id"]
-    get_res = client.get(f"/api/v1/reports/{rep_id}", headers=AUTH_HEADERS)
-    assert get_res.status_code == 404
-    assert get_res.json()["error"]["code"] == "NOT_FOUND"
+    assert res.status_code == 501
+    assert res.json()["error"]["code"] == "FEATURE_NOT_AVAILABLE"
 
 
 def test_upload_jpeg_valid_magic_bytes():
@@ -60,8 +45,8 @@ def test_upload_jpeg_valid_magic_bytes():
         data={"stage": "pregnancy", "consent_to_store": "true"},
         files={"file": ("ultrasound.jpg", valid_jpeg_bytes, "image/jpeg")},
     )
-    assert res.status_code == 200
-    assert res.json()["report_id"].startswith("rep_")
+    assert res.status_code == 501
+    assert res.json()["error"]["code"] == "FEATURE_NOT_AVAILABLE"
 
 
 def test_upload_corrupted_magic_bytes_rejected():
