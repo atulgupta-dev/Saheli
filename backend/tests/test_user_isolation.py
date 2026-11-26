@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from app.main import app
+from app.services.firestore import get_default_firestore_service
 
 client = TestClient(app)
 USER_A_HEADERS = {"Authorization": "Bearer mock_user_alice"}
@@ -7,15 +8,13 @@ USER_B_HEADERS = {"Authorization": "Bearer mock_user_bob"}
 
 
 def test_cross_user_isolation_reports():
-    # User Alice uploads a report
-    upload_res = client.post(
-        "/api/v1/reports",
-        headers=USER_A_HEADERS,
-        data={"stage": "pregnancy", "consent_to_store": "true"},
-        files={"file": ("alice_scan.pdf", b"%PDF-1.4 simulated ultrasound content", "application/pdf")},
+    # Seed synthetic metadata independently of the unfinished analysis endpoint.
+    alice_report_id = "rep_synthetic_isolation"
+    get_default_firestore_service().save_report_metadata(
+        uid="mock_user_alice",
+        report_id=alice_report_id,
+        report_data={"report_id": alice_report_id, "status": "completed", "extracted": {}},
     )
-    assert upload_res.status_code == 200
-    alice_report_id = upload_res.json()["report_id"]
 
     # User Alice can access her report
     alice_get = client.get(f"/api/v1/reports/{alice_report_id}", headers=USER_A_HEADERS)
