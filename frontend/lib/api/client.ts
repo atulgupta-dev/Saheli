@@ -36,7 +36,11 @@ export class ApiClientError extends Error {
 }
 
 export function getApiBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/$/, "");
+  return (
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    ""
+  ).replace(/\/$/, "");
 }
 
 export function isBackendConfigured(): boolean {

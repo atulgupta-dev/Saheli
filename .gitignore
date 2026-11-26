@@ -17,6 +17,8 @@ venv/
 firebase-adminsdk*.json
 *.pem
 *.log
+*.secret
+.token.secret
 .DS_Store
 .vscode/
 .idea/
