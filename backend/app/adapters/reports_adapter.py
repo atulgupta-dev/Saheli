@@ -1,19 +1,10 @@
 from __future__ import annotations
 
-import logging
 import uuid
-from typing import Optional
 from app.core.exceptions import FeatureNotAvailableError
-from app.core.models import (
-    ReportCitation,
-    ReportExtracted,
-    ReportResponse,
-)
+from app.core.models import ReportResponse
 from app.services.firestore import FirestoreService
 from app.services.storage import StorageService
-
-logger = logging.getLogger("saheli.adapters.reports")
-
 
 class ReportsAdapter:
     """
@@ -59,7 +50,6 @@ class ReportsAdapter:
         )
 
         # Check if Member 3 module is implemented
-        extracted_data = None
         try:
             from app.modules.pregnancy.reports import service as member3_reports_service  # type: ignore
             if hasattr(member3_reports_service, "process_report"):
@@ -77,52 +67,4 @@ class ReportsAdapter:
         except (ImportError, AttributeError):
             pass
 
-        # Fallback contract-compliant mock response for Hackathon demo
-        extracted = ReportExtracted(
-            gestational_age_weeks=28,
-            measurements=[
-                {"metric": "BPD", "value": "71mm", "percentile": "50th"},
-                {"metric": "FL", "value": "53mm", "percentile": "50th"},
-                {"metric": "AC", "value": "240mm", "percentile": "50th"},
-            ],
-        )
-        explanations = [
-            {"term": "BPD", "definition": "Biparietal diameter: distance across the fetal head."},
-            {"term": "FL", "definition": "Femur length: length of the thigh bone."},
-        ]
-        citations = [
-            ReportCitation(page=1, quote="Estimated Gestational Age: 28 weeks 0 days"),
-        ]
-        warnings = ["Education only"]
-
-        response = ReportResponse(
-            report_id=report_id,
-            status="completed",
-            extracted=extracted,
-            explanations=explanations,
-            citations=citations,
-            warnings=warnings,
-        )
-
-        # HACKATHON SPARK POLICY:
-        # If consent_to_store is False, do NOT persist the report or its extracted contents in Firestore.
-        # If consent_to_store is True, save only the structured metadata and findings in Firestore.
-        if consent_to_store:
-            self.firestore_service.save_report_metadata(
-                uid=uid,
-                report_id=report_id,
-                report_data={
-                    "report_id": report_id,
-                    "status": "completed",
-                    "stage": stage,
-                    "storage_mode": "ephemeral_spark",
-                    "consent_to_store": True,
-                    "extracted": extracted.model_dump(),
-                    "citations": [c.model_dump() for c in citations],
-                    "warnings": warnings,
-                },
-            )
-        else:
-            logger.info(f"User {uid} opted out of storage consent (consent_to_store=False). No Firestore record created.")
-
-        return response
+        raise FeatureNotAvailableError("Report analysis is not available yet")
