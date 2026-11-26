@@ -32,7 +32,9 @@ class VoiceAdapter:
         try:
             from app.services.voice import service as member1_voice_service  # type: ignore
             if hasattr(member1_voice_service, "process_chat"):
-                return await member1_voice_service.process_chat(uid, request)
+                return await member1_voice_service.process_chat(
+                    uid=uid, request=request, firestore_service=self.firestore_service
+                )
         except (ImportError, AttributeError):
             pass
 
