@@ -36,10 +36,10 @@ class CareSummaryAdapter:
 
         event_id = f"care_{uuid.uuid4().hex[:8]}"
         summary_text = (
-            f"Pregnancy care summary compiled for patient review. "
-            f"Includes {len(valid_references)} verified report(s). "
-            f"Symptom history included: {request.include_symptoms}. "
-            f"Key metrics indicate normal progression at week 28."
+            f"Compiled pregnancy care overview for healthcare provider review. "
+            f"Includes {len(valid_references)} submitted report record(s). "
+            f"Patient-reported symptom history included: {request.include_symptoms}. "
+            f"For clinician reference only; does not provide a medical diagnosis or clinical evaluation."
         )
 
         # Store care event under users/{uid}/care_events/{id}
