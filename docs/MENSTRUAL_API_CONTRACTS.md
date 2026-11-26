@@ -65,7 +65,11 @@ All endpoints require `Authorization: Bearer <Firebase ID token>`.
   ```
 
 ### C. GET `/api/v1/menstrual/cycles/predictions`
-- **Response (200 OK)**:
+- **Behavior**:
+  - Requires at least 2 recorded period start dates to calculate cycle intervals.
+  - If 0 or 1 period record exists, returns `status: "insufficient_data"`, `confidence: "none"`, and `predicted_next_start_date: null` to avoid presenting a misleading personalized date without adequate history.
+  - Once 2+ cycles are logged, calculates personalized estimation using the user's average cycle length.
+- **Response (200 OK - With >= 2 records)**:
   ```json
   {
     "status": "calculated",

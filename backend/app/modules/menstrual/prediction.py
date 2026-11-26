@@ -146,22 +146,19 @@ def predict_next_cycle(periods: List[PeriodRecordResponse]) -> CyclePrediction:
     cycle_lengths = calculate_cycle_lengths(sorted_periods)
 
     if not cycle_lengths:
-        # Exactly 1 period record: provisional 28-day baseline
-        provisional_length = 28
-        predicted_start = latest_start + datetime.timedelta(days=provisional_length)
-        predicted_end = predicted_start + datetime.timedelta(days=default_duration - 1)
-
+        # Exactly 1 period record: Insufficient data to calculate intervals.
+        # Do not return a personalized-looking date with only one start date to prevent misleading users.
         return CyclePrediction(
             status="insufficient_data",
-            predicted_next_start_date=predicted_start.isoformat(),
-            predicted_next_end_date=predicted_end.isoformat(),
-            estimated_cycle_length_days=provisional_length,
-            confidence="low",
+            predicted_next_start_date=None,
+            predicted_next_end_date=None,
+            estimated_cycle_length_days=None,
+            confidence="none",
             cycle_variation_days=None,
             is_irregular=False,
             message=(
-                "Provisional estimate based on standard 28-day cycle baseline. "
-                "Log your next period start date for personalized cycle estimates."
+                "At least two recorded period start dates are required to calculate cycle intervals "
+                "and predict your next period. Please log your next period when it begins."
             ),
         )
 

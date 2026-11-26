@@ -153,7 +153,7 @@ def test_cycle_statistics_and_prediction_flow():
     assert stats_0["total_records"] == 0
     assert stats_0["completed_cycles_evaluated"] == 0
 
-    # 1 record: provisional 28-day estimate
+    # 1 record: insufficient data (no predicted date returned to avoid misleading users)
     client.post(
         "/api/v1/menstrual/cycles",
         headers=user_calc_headers,
@@ -161,8 +161,9 @@ def test_cycle_statistics_and_prediction_flow():
     )
     pred_1 = client.get("/api/v1/menstrual/cycles/predictions", headers=user_calc_headers).json()
     assert pred_1["status"] == "insufficient_data"
-    assert pred_1["confidence"] == "low"
-    assert pred_1["predicted_next_start_date"] == "2026-01-29"  # 2026-01-01 + 28 days
+    assert pred_1["confidence"] == "none"
+    assert pred_1["predicted_next_start_date"] is None
+    assert "at least two" in pred_1["message"].lower()
 
     # 2 records (Cycle length: 28 days: Jan 1 to Jan 29)
     client.post(
