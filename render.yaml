@@ -1,0 +1,28 @@
+# Render Blueprint for Saheli AI Backend (Free Tier)
+services:
+  - type: web
+    name: saheli-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: production
+      - key: FIREBASE_PROJECT_ID
+        value: saheli-2576f
+      - key: GOOGLE_CLOUD_PROJECT
+        value: saheli-2576f
+      - key: ENABLE_DEMO_MOCKS
+        value: "false"
+      - key: CORS_ORIGINS
+        value: "http://localhost:3000,https://saheli.vercel.app"
+      - key: CORS_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app"
+      - key: FIREBASE_SERVICE_ACCOUNT_B64
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
