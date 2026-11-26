@@ -306,6 +306,105 @@ class FirestoreService:
         doc_ref.set(event_data)
         return event_id
 
+    # ---------------------------------------------------------
+    # Menstrual Health Subcollections (users/{uid}/...)
+    # ---------------------------------------------------------
+
+    def save_menstrual_cycle(self, uid: str, cycle_id: str, cycle_data: Dict[str, Any]) -> None:
+        """Store or update a menstrual cycle record under users/{uid}/menstrual_cycles/{cycle_id}."""
+        now = _utc_now_iso()
+        cycle_data["updated_at"] = now
+        if "created_at" not in cycle_data:
+            cycle_data["created_at"] = now
+
+        if self.use_mock:
+            if uid not in self._memory_store:
+                self.create_or_get_user_profile(uid)
+            cycles = self._memory_store[uid].setdefault("menstrual_cycles", {})
+            cycles[cycle_id] = cycle_data
+            return
+
+        assert self._client is not None
+        doc_ref = self._client.collection("users").document(uid).collection("menstrual_cycles").document(cycle_id)
+        doc_ref.set(cycle_data, merge=True)
+
+    def get_menstrual_cycle(self, uid: str, cycle_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a specific menstrual cycle record strictly scoped to users/{uid}."""
+        if self.use_mock:
+            user_data = self._memory_store.get(uid)
+            if not user_data:
+                return None
+            return user_data.get("menstrual_cycles", {}).get(cycle_id)
+
+        assert self._client is not None
+        doc_ref = self._client.collection("users").document(uid).collection("menstrual_cycles").document(cycle_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return None
+        return doc.to_dict()
+
+    def list_menstrual_cycles(self, uid: str) -> List[Dict[str, Any]]:
+        """List all menstrual cycle records for the authenticated user, sorted by start_date ascending."""
+        if self.use_mock:
+            user_data = self._memory_store.get(uid)
+            if not user_data:
+                return []
+            cycles = list(user_data.get("menstrual_cycles", {}).values())
+            return sorted(cycles, key=lambda c: c.get("start_date", ""))
+
+        assert self._client is not None
+        coll_ref = self._client.collection("users").document(uid).collection("menstrual_cycles")
+        docs = coll_ref.order_by("start_date").stream()
+        return [doc.to_dict() for doc in docs]
+
+    def delete_menstrual_cycle(self, uid: str, cycle_id: str) -> bool:
+        """Delete a menstrual cycle record under users/{uid}/menstrual_cycles/{cycle_id}."""
+        if self.use_mock:
+            user_data = self._memory_store.get(uid)
+            if not user_data or "menstrual_cycles" not in user_data:
+                return False
+            cycles = user_data["menstrual_cycles"]
+            if cycle_id in cycles:
+                del cycles[cycle_id]
+                return True
+            return False
+
+        assert self._client is not None
+        doc_ref = self._client.collection("users").document(uid).collection("menstrual_cycles").document(cycle_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return False
+        doc_ref.delete()
+        return True
+
+    def save_menstrual_symptom(self, uid: str, entry_id: str, entry_data: Dict[str, Any]) -> str:
+        """Store menstrual symptom record under users/{uid}/menstrual_symptoms/{entry_id}."""
+        entry_data["created_at"] = _utc_now_iso()
+        if self.use_mock:
+            if uid not in self._memory_store:
+                self.create_or_get_user_profile(uid)
+            self._memory_store[uid].setdefault("menstrual_symptoms", {})[entry_id] = entry_data
+            return entry_id
+
+        assert self._client is not None
+        doc_ref = self._client.collection("users").document(uid).collection("menstrual_symptoms").document(entry_id)
+        doc_ref.set(entry_data)
+        return entry_id
+
+    def list_menstrual_symptoms(self, uid: str) -> List[Dict[str, Any]]:
+        """List all menstrual symptoms for user sorted by date descending."""
+        if self.use_mock:
+            user_data = self._memory_store.get(uid)
+            if not user_data:
+                return []
+            symptoms = list(user_data.get("menstrual_symptoms", {}).values())
+            return sorted(symptoms, key=lambda s: s.get("date", ""), reverse=True)
+
+        assert self._client is not None
+        coll_ref = self._client.collection("users").document(uid).collection("menstrual_symptoms")
+        docs = coll_ref.order_by("date", direction="DESCENDING").stream()
+        return [doc.to_dict() for doc in docs]
+
 
 _default_firestore_service: Optional[FirestoreService] = None
 

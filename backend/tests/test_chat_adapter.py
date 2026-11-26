@@ -23,10 +23,40 @@ def test_pregnancy_chat_success():
     assert data["memory_saved"] is True
 
 
-def test_non_pregnancy_chat_feature_not_available():
+def test_menstrual_chat_success():
     payload = {
         "stage": "menstrual",
-        "message": "Cramps are painful",
+        "message": "Periods ke dauran hydration kaise maintain karein?",
+        "locale": "hi-IN",
+        "save_to_memory": True,
+    }
+    res = client.post("/api/v1/chat", headers=AUTH_HEADERS, json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["conversation_id"].startswith("conv_")
+    assert "Saheli" in data["reply"]
+    assert data["safety"]["level"] == "informational"
+    assert data["memory_saved"] is True
+
+
+def test_menstrual_chat_urgent_safety_escalation():
+    payload = {
+        "stage": "menstrual",
+        "message": "Fainting with sudden severe abdominal pain and heavy bleeding",
+        "locale": "hi-IN",
+        "save_to_memory": False,
+    }
+    res = client.post("/api/v1/chat", headers=AUTH_HEADERS, json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["safety"]["level"] == "urgent"
+    assert data["memory_saved"] is False
+
+
+def test_unimplemented_stage_chat_feature_not_available():
+    payload = {
+        "stage": "postpartum",
+        "message": "Postpartum recovery question",
         "locale": "hi-IN",
         "save_to_memory": True,
     }
